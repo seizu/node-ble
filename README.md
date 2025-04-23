@@ -3,15 +3,19 @@
 Bluetooth Low Energy (BLE) library written with pure Node.js (no bindings) - baked by Bluez via DBus
 
 [![chrvadala](https://img.shields.io/badge/website-chrvadala-orange.svg)](https://chrvadala.github.io)
+[![Donate](https://img.shields.io/badge/donate-Paypal-lightgrey.svg)](https://www.paypal.com/paypalme/chrvadala/15)
+
 [![Test](https://github.com/chrvadala/node-ble/workflows/Test/badge.svg)](https://github.com/chrvadala/node-ble/actions)
 [![Coverage Status](https://coveralls.io/repos/github/chrvadala/node-ble/badge.svg?branch=master)](https://coveralls.io/github/chrvadala/node-ble?branch=master)
 [![npm](https://img.shields.io/npm/v/node-ble.svg?maxAge=2592000?style=plastic)](https://www.npmjs.com/package/node-ble)
 [![Downloads](https://img.shields.io/npm/dm/node-ble.svg)](https://www.npmjs.com/package/node-ble)
-[![Donate](https://img.shields.io/badge/donate-GithubSponsor-green.svg)](https://github.com/sponsors/chrvadala)
+
+
 
 
 # Documentation
 - [Documentation testing](https://github.com/chrvadala/node-ble/blob/main/docs/documentation-testing.md)
+- [Quick start guide](#quick-start-guide)
 - [APIs](https://github.com/chrvadala/node-ble/blob/main/docs/api.md)
   - [createBluetooth](https://github.com/chrvadala/node-ble/blob/main/docs/api.md#createBluetooth)
   - [Bluetooth](https://github.com/chrvadala/node-ble/blob/main/docs/api.md#Bluetooth)
@@ -26,7 +30,7 @@ This library works on many architectures supported by Linux. However Windows and
 
 It leverages the `bluez` driver, a component supported by the following platforms and distributions <https://www.bluez.org/about>.
 
-*node-ble* has been tested on the following architectures:
+*node-ble* has been tested on the following operating systems:
 - Raspbian
 - Ubuntu
 - Debian
@@ -36,18 +40,18 @@ It leverages the `bluez` driver, a component supported by the following platform
 npm install node-ble
 ```
 
-# Examples
+# Quick start guide
 
 ## Provide permissions
 In order to allow a connection with the DBus daemon, you have to set up right permissions.
 
-Create the file `/etc/dbus-1/system.d/node-ble.conf` with the following content (customize with userid)
+Execute the following command, in order to create the file `/etc/dbus-1/system.d/node-ble.conf`, configured with the current *user id* (Note: You may need to manually change the *user id*).
 
-```xml
-<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN"
+```sh
+echo '<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN"
   "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
 <busconfig>
-  <policy user="%userid%">
+  <policy user="__USERID__">
    <allow own="org.bluez"/>
     <allow send_destination="org.bluez"/>
     <allow send_interface="org.bluez.GattCharacteristic1"/>
@@ -55,11 +59,11 @@ Create the file `/etc/dbus-1/system.d/node-ble.conf` with the following content 
     <allow send_interface="org.freedesktop.DBus.ObjectManager"/>
     <allow send_interface="org.freedesktop.DBus.Properties"/>
   </policy>
-</busconfig>
+</busconfig>' | sed "s/__USERID__/$(id -un)/" | sudo tee /etc/dbus-1/system.d/node-ble.conf > /dev/null
 ```
 
 ## STEP 1: Get Adapter
-To start a Bluetooth Low Energy (BLE) connection you need a Bluetooth adapter.
+To start a Bluetooth Low Energy (BLE) connection you need a Bluetooth adapter instance.
 
 ```javascript
 const {createBluetooth} = require('node-ble')
@@ -75,7 +79,7 @@ if (! await adapter.isDiscovering())
 ```
 
 ## STEP 3: Get a device, Connect and Get GATT Server
-Use an adapter to get a remote Bluetooth device, then connect to it and bind to the GATT (Generic Attribute Profile) server.
+Use the adapter instance in order to get a remote Bluetooth device, then connect and interact with the GATT (Generic Attribute Profile) server.
 
 ```javascript
 const device = await adapter.waitDevice('00:00:00:00:00:00')
@@ -96,16 +100,16 @@ console.log(buffer)
 ```javascript
 const service2 = await gattServer.getPrimaryService('uuid')
 const characteristic2 = await service2.getCharacteristic('uuid')
-await characteristic2.startNotifications()
 characteristic2.on('valuechanged', buffer => {
   console.log(buffer)
 })
-await characteristic2.stopNotifications()
+await characteristic2.startNotifications()
 ```
 
 ## STEP 5: Disconnect
-When you have done you can disconnect and destroy the session.
+When you have done you can stop notifications, disconnect and destroy the session.
 ```javascript
+await characteristic2.stopNotifications()
 await device.disconnect()
 destroy()
 ```
@@ -124,6 +128,8 @@ destroy()
 - **1.9** - Upgrades deps; Adds `writeValueWithoutResponse()` and `writeValueWithResponse` methods [#47](https://github.com/chrvadala/node-ble/pull/47); Improves typescript definition [#48](https://github.com/chrvadala/node-ble/pull/48) 
 - **1.10** - Upgrades deps and gh-actions; Fixes memory leak [#37](https://github.com/chrvadala/node-ble/pull/37); Makes MAC Address case insensitive
 - **1.11** - Upgrades deps; Fixes doc [#69](https://github.com/chrvadala/node-ble/pull/69); Adds `getManufacturerData` and `getAdvertisingData`  functions on `Device` [#67](https://github.com/chrvadala/node-ble/pull/67); Adds `getServiceData` functions on `Device`; Improves pre-requisite doc section [#68](https://github.com/chrvadala/node-ble/pull/68)
+- **1.12** - Upgrades deps and actions; Fixes memory leak [#75](https://github.com/chrvadala/node-ble/pull/75); Improved docs with copy-and-paste configuration scripts.
+- **1.13** - Upgrades deps; Fixes race condition [#77](https://github.com/chrvadala/node-ble/pull/77)
 
 # Contributors
 - [chrvadala](https://github.com/chrvadala) (author)
@@ -136,6 +142,7 @@ destroy()
 - [raffone17](https://github.com/Raffone17)
 - [gmacario](https://github.com/gmacario)
 - [ianchanning](https://github.com/ianchanning)
+- [nmasse-itix](https://github.com/nmasse-itix)
 
 # References
 - https://git.kernel.org/pub/scm/bluetooth/bluez.git/tree/doc/adapter-api.txt?h=5.64
@@ -157,3 +164,4 @@ destroy()
 | hcitool dev | Adapter info (through Bluez) |
 | d-feet | DBus debugging tool |
 | nvram bluetoothHostControllerSwitchBehavior=never | Only on Parallels |
+| inxi --bluetooth -z | Bluetooth device info |
