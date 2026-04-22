@@ -102,9 +102,14 @@ module.exports = function (RED) {
       } else if (operation === 'unsubscribe') {
         const sub = activeSubscriptions.get(mac)
         if (!sub) throw new Error('No active subscription for ' + mac)
-        await sub.characteristic.stopNotifications()
-        await sub.device.disconnect()
-        sub.destroy()
+        try {
+          await sub.characteristic.stopNotifications()
+          await sub.device.disconnect()
+          sub.destroy()
+        } catch (e) {
+          // Connection may have dropped, cleanup anyway
+          node.warn('Unsubscribe cleanup warning: ' + e.message)        
+        }
         activeSubscriptions.delete(mac)
         return [{ payload: 'Unsubscribe successful' }, null, null]
 
