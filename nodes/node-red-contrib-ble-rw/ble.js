@@ -39,7 +39,7 @@ module.exports = function (RED) {
     await writeChar.writeValue(Buffer.from(writeData, 'hex'))
   }
 
-  async function processBluetoothOperation (operation, handle, mac, data, retries, retryDelay, writeHandle, writeData, onNotify) {
+  async function processBluetoothOperation (operation, handle, mac, data, retries, retryDelay, writeHandle, writeData, subscribeTimeout, onNotify) {
     let device
 
     try {
@@ -63,8 +63,21 @@ module.exports = function (RED) {
         const conn = await connectWithRetry(mac, handle, retries, retryDelay)
         device = conn.device
         return await new Promise(async (resolve, reject) => {
+          // Timeout if no notification received
+          const timer = setTimeout(async () => {
+            try {
+              await conn.characteristic.stopNotifications()
+              await device.disconnect()
+              conn.destroy()
+            } catch (e) {
+              console.warn('subscribe_once timeout cleanup warning: ' + e.message)
+            }
+            reject(new Error('subscribe_once timed out after ' + subscribeTimeout + 'ms'))
+          }, subscribeTimeout)
+
           try {
             conn.characteristic.on('valuechanged', async (value) => {
+              clearTimeout(timer)
               await conn.characteristic.stopNotifications()
               await device.disconnect()
               conn.destroy()
@@ -77,6 +90,7 @@ module.exports = function (RED) {
               await triggerWrite(gattServer, parseInt(writeHandle, 16), writeData)
             }
           } catch (err) {
+            clearTimeout(timer)
             reject(err)
           }
         })
@@ -107,8 +121,7 @@ module.exports = function (RED) {
           await sub.device.disconnect()
           sub.destroy()
         } catch (e) {
-          // Connection may have dropped, cleanup anyway
-          node.warn('Unsubscribe cleanup warning: ' + e.message)        
+          console.warn('Unsubscribe cleanup warning: ' + e.message)
         }
         activeSubscriptions.delete(mac)
         return [{ payload: 'Unsubscribe successful' }, null, null]
@@ -136,6 +149,7 @@ module.exports = function (RED) {
       const data = msg.payload.data || ''
       const retries = config.retries || 3
       const retryDelay = config.retryDelay || 2000
+      const subscribeTimeout = config.subscribeTimeout || 30000
       const writeHandle = msg.payload.write_handle || null
       const writeData = msg.payload.write_data || null
 
@@ -164,7 +178,7 @@ module.exports = function (RED) {
           node.send([null, null, { payload: hexValue }])
         }
 
-        const result = await processBluetoothOperation(operation, handle, mac, data, retries, retryDelay, writeHandle, writeData, onNotify)
+        const result = await processBluetoothOperation(operation, handle, mac, data, retries, retryDelay, writeHandle, writeData, subscribeTimeout, onNotify)
         node.status({ fill: 'green', shape: 'dot', text: 'done' })
         node.send(result)
 
@@ -182,7 +196,9 @@ module.exports = function (RED) {
           await sub.characteristic.stopNotifications()
           await sub.device.disconnect()
           sub.destroy()
-        } catch (e) {}
+        } catch (e) {
+          console.warn('Close cleanup warning: ' + e.message)
+        }
         activeSubscriptions.delete(mac)
       }
     })

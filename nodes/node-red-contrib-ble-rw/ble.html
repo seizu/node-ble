@@ -8,7 +8,8 @@
             handle: { value: "" },
             operation: { value: "read", required: true },
             retries: { value: 3 },
-            retryDelay: { value: 2000 }
+            retryDelay: { value: 2000 },
+            subscribeTimeout: { value: 30000 }
         },
         inputs: 1,
         outputs: 3,
@@ -56,6 +57,11 @@
         <label for="node-input-retryDelay"><i class="fa fa-clock-o"></i> Retry Delay (ms)</label>
         <input type="number" id="node-input-retryDelay" placeholder="2000" min="500" max="10000">
     </div>
+
+    <div class="form-row">
+        <label for="node-input-subscribeTimeout"><i class="fa fa-hourglass"></i> Subscribe Timeout (ms)</label>
+        <input type="number" id="node-input-subscribeTimeout" placeholder="30000" min="1000" max="120000">
+    </div>
 </script>
 
 <script type="text/html" data-help-name="ble">
@@ -74,6 +80,12 @@
 
         <dt>payload.data <span class="property-type">string</span></dt>
         <dd>Hex string data (required for write operations).</dd>
+
+        <dt>payload.write_handle <span class="property-type">string</span></dt>
+        <dd>Optional write handle for subscribe/subscribe_once trigger.</dd>
+
+        <dt>payload.write_data <span class="property-type">string</span></dt>
+        <dd>Optional hex data for subscribe/subscribe_once trigger.</dd>
     </dl>
 
     <h3>Outputs</h3>
