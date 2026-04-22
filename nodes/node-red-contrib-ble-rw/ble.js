@@ -31,15 +31,22 @@ module.exports = function (RED) {
     }
   }
 
-  async function processBluetoothOperation (operation, handle, mac, data, retries, retryDelay, onNotify) {
+  async function triggerWrite (gattServer, writeHandle, writeData) {
+    const writeUuid = await gattServer.getUUIDbyHandle(writeHandle)
+    if (!writeUuid) throw new Error('UUIDs not found for write handle')
+    const writeService = await gattServer.getPrimaryService(writeUuid.service)
+    const writeChar = await writeService.getCharacteristic(writeUuid.char)
+    await writeChar.writeValue(Buffer.from(writeData, 'hex'))
+  }
+
+  async function processBluetoothOperation (operation, handle, mac, data, retries, retryDelay, writeHandle, writeData, onNotify) {
     let device
 
     try {
       if (operation === 'write') {
         const conn = await connectWithRetry(mac, handle, retries, retryDelay)
         device = conn.device
-        const dataToWrite = Buffer.from(data, 'hex')
-        await conn.characteristic.writeValue(dataToWrite)
+        await conn.characteristic.writeValue(Buffer.from(data, 'hex'))
         await device.disconnect()
         conn.destroy()
         return [{ payload: 'Write operation successful' }, null, null]
@@ -64,6 +71,11 @@ module.exports = function (RED) {
               resolve([{ payload: 'Notification received' }, null, { payload: value.toString('hex') }])
             })
             await conn.characteristic.startNotifications()
+            // Optional write after notify is active
+            if (writeHandle && writeData) {
+              const gattServer = await device.gatt()
+              await triggerWrite(gattServer, parseInt(writeHandle, 16), writeData)
+            }
           } catch (err) {
             reject(err)
           }
@@ -79,6 +91,11 @@ module.exports = function (RED) {
           onNotify(value.toString('hex'))
         })
         await conn.characteristic.startNotifications()
+        // Optional write after notify is active
+        if (writeHandle && writeData) {
+          const gattServer = await device.gatt()
+          await triggerWrite(gattServer, parseInt(writeHandle, 16), writeData)
+        }
         activeSubscriptions.set(mac, { device, characteristic: conn.characteristic, destroy: conn.destroy })
         return [{ payload: 'Subscribe successful' }, null, null]
 
@@ -114,6 +131,8 @@ module.exports = function (RED) {
       const data = msg.payload.data || ''
       const retries = config.retries || 3
       const retryDelay = config.retryDelay || 2000
+      const writeHandle = msg.payload.write_handle || null
+      const writeData = msg.payload.write_data || null
 
       node.status({ fill: 'blue', shape: 'dot', text: 'connecting...' })
 
@@ -140,7 +159,7 @@ module.exports = function (RED) {
           node.send([null, null, { payload: hexValue }])
         }
 
-        const result = await processBluetoothOperation(operation, handle, mac, data, retries, retryDelay, onNotify)
+        const result = await processBluetoothOperation(operation, handle, mac, data, retries, retryDelay, writeHandle, writeData, onNotify)
         node.status({ fill: 'green', shape: 'dot', text: 'done' })
         node.send(result)
 
