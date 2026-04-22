@@ -1,0 +1,168 @@
+module.exports = function (RED) {
+  const { createBluetooth } = require('node-ble')
+
+  // Store active subscriptions: mac -> { device, characteristic, destroy }
+  const activeSubscriptions = new Map()
+
+  async function connectAndGetCharacteristic (mac, handle) {
+    const { bluetooth, destroy } = createBluetooth()
+    const adapter = await bluetooth.defaultAdapter()
+    if (!await adapter.isDiscovering()) {
+      await adapter.startDiscovery()
+    }
+    const device = await adapter.waitDevice(mac)
+    await device.connect()
+    const gattServer = await device.gatt()
+    const uuid = await gattServer.getUUIDbyHandle(handle)
+    if (!uuid) throw new Error('UUIDs not found for the given handle')
+    const service = await gattServer.getPrimaryService(uuid.service)
+    const characteristic = await service.getCharacteristic(uuid.char)
+    return { device, characteristic, bluetooth, destroy }
+  }
+
+  async function connectWithRetry (mac, handle, retries, retryDelay) {
+    for (let i = 0; i < retries; i++) {
+      try {
+        return await connectAndGetCharacteristic(mac, handle)
+      } catch (err) {
+        if (i === retries - 1) throw err
+        await new Promise(res => setTimeout(res, retryDelay))
+      }
+    }
+  }
+
+  async function processBluetoothOperation (operation, handle, mac, data, retries, retryDelay, onNotify) {
+    let device
+
+    try {
+      if (operation === 'write') {
+        const conn = await connectWithRetry(mac, handle, retries, retryDelay)
+        device = conn.device
+        const dataToWrite = Buffer.from(data, 'hex')
+        await conn.characteristic.writeValue(dataToWrite)
+        await device.disconnect()
+        conn.destroy()
+        return [{ payload: 'Write operation successful' }, null, null]
+
+      } else if (operation === 'read') {
+        const conn = await connectWithRetry(mac, handle, retries, retryDelay)
+        device = conn.device
+        const value = await conn.characteristic.readValue(0)
+        await device.disconnect()
+        conn.destroy()
+        return [{ payload: 'Read operation successful' }, null, { payload: value.toString('hex') }]
+
+      } else if (operation === 'subscribe_once') {
+        const conn = await connectWithRetry(mac, handle, retries, retryDelay)
+        device = conn.device
+        return await new Promise(async (resolve, reject) => {
+          try {
+            conn.characteristic.on('valuechanged', async (value) => {
+              await conn.characteristic.stopNotifications()
+              await device.disconnect()
+              conn.destroy()
+              resolve([{ payload: 'Notification received' }, null, { payload: value.toString('hex') }])
+            })
+            await conn.characteristic.startNotifications()
+          } catch (err) {
+            reject(err)
+          }
+        })
+
+      } else if (operation === 'subscribe') {
+        if (activeSubscriptions.has(mac)) {
+          throw new Error('Already subscribed for ' + mac)
+        }
+        const conn = await connectWithRetry(mac, handle, retries, retryDelay)
+        device = conn.device
+        conn.characteristic.on('valuechanged', (value) => {
+          onNotify(value.toString('hex'))
+        })
+        await conn.characteristic.startNotifications()
+        activeSubscriptions.set(mac, { device, characteristic: conn.characteristic, destroy: conn.destroy })
+        return [{ payload: 'Subscribe successful' }, null, null]
+
+      } else if (operation === 'unsubscribe') {
+        const sub = activeSubscriptions.get(mac)
+        if (!sub) throw new Error('No active subscription for ' + mac)
+        await sub.characteristic.stopNotifications()
+        await sub.device.disconnect()
+        sub.destroy()
+        activeSubscriptions.delete(mac)
+        return [{ payload: 'Unsubscribe successful' }, null, null]
+
+      } else {
+        return [null, { payload: 'Invalid operation type' }, null]
+      }
+
+    } catch (error) {
+      if (device && operation !== 'subscribe' && operation !== 'unsubscribe') {
+        try { await device.disconnect() } catch (e) {}
+      }
+      throw new Error('Bluetooth error: ' + error.message)
+    }
+  }
+
+  function BluetoothNode (config) {
+    RED.nodes.createNode(this, config)
+    const node = this
+
+    node.on('input', async function (msg) {
+      const operation = msg.payload.operation || config.operation
+      const mac = msg.payload.mac || config.mac
+      const rawHandle = msg.payload.handle || config.handle
+      const data = msg.payload.data || ''
+      const retries = config.retries || 3
+      const retryDelay = config.retryDelay || 2000
+
+      node.status({ fill: 'blue', shape: 'dot', text: 'connecting...' })
+
+      let handle = NaN
+      if (typeof rawHandle === 'string') {
+        handle = parseInt(rawHandle, 16)
+      } else {
+        handle = rawHandle
+      }
+
+      if (!mac || isNaN(handle) || !operation) {
+        node.status({ fill: 'red', shape: 'ring', text: 'missing params' })
+        return node.send([null, { payload: 'Missing parameter: mac, handle or operation' }, null])
+      }
+
+      if (operation === 'write' && (!data || data.length === 0)) {
+        node.status({ fill: 'red', shape: 'ring', text: 'no data' })
+        return node.send([null, { payload: 'Missing write data' }, null])
+      }
+
+      try {
+        const onNotify = (hexValue) => {
+          node.status({ fill: 'green', shape: 'dot', text: 'notification' })
+          node.send([null, null, { payload: hexValue }])
+        }
+
+        const result = await processBluetoothOperation(operation, handle, mac, data, retries, retryDelay, onNotify)
+        node.status({ fill: 'green', shape: 'dot', text: 'done' })
+        node.send(result)
+
+      } catch (error) {
+        node.status({ fill: 'red', shape: 'dot', text: 'error' })
+        node.error(error.message)
+        node.send([null, { payload: error.message }, null])
+      }
+    })
+
+    // Cleanup on node redeploy/stop
+    node.on('close', async () => {
+      for (const [mac, sub] of activeSubscriptions) {
+        try {
+          await sub.characteristic.stopNotifications()
+          await sub.device.disconnect()
+          sub.destroy()
+        } catch (e) {}
+        activeSubscriptions.delete(mac)
+      }
+    })
+  }
+
+  RED.nodes.registerType('ble', BluetoothNode)
+}
