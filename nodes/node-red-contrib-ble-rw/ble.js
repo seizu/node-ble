@@ -39,39 +39,45 @@ module.exports = function (RED) {
     await writeChar.writeValue(Buffer.from(writeData, 'hex'))
   }
 
+  async function cleanup (device, conn) {
+    if (device) {
+      try { await device.disconnect() } catch (e) {
+        console.warn('Cleanup disconnect warning: ' + e.message)
+      }
+    }
+    if (conn) {
+      try { conn.destroy() } catch (e) {
+        console.warn('Cleanup destroy warning: ' + e.message)
+      }
+    }
+  }
+
   async function processBluetoothOperation (operation, handle, mac, data, retries, retryDelay, writeHandle, writeData, subscribeTimeout, onNotify) {
     let device
+    let conn
 
     try {
       if (operation === 'write') {
-        const conn = await connectWithRetry(mac, handle, retries, retryDelay)
+        conn = await connectWithRetry(mac, handle, retries, retryDelay)
         device = conn.device
         await conn.characteristic.writeValue(Buffer.from(data, 'hex'))
-        await device.disconnect()
-        conn.destroy()
+        await cleanup(device, conn)
         return [{ payload: 'Write operation successful' }, null, null]
 
       } else if (operation === 'read') {
-        const conn = await connectWithRetry(mac, handle, retries, retryDelay)
+        conn = await connectWithRetry(mac, handle, retries, retryDelay)
         device = conn.device
         const value = await conn.characteristic.readValue(0)
-        await device.disconnect()
-        conn.destroy()
+        await cleanup(device, conn)
         return [{ payload: 'Read operation successful' }, null, { payload: value.toString('hex') }]
 
       } else if (operation === 'subscribe_once') {
-        const conn = await connectWithRetry(mac, handle, retries, retryDelay)
+        conn = await connectWithRetry(mac, handle, retries, retryDelay)
         device = conn.device
         return await new Promise(async (resolve, reject) => {
-          // Timeout if no notification received
           const timer = setTimeout(async () => {
-            try {
-              await conn.characteristic.stopNotifications()
-              await device.disconnect()
-              conn.destroy()
-            } catch (e) {
-              console.warn('subscribe_once timeout cleanup warning: ' + e.message)
-            }
+            console.warn('subscribe_once: timed out after ' + subscribeTimeout + 'ms')
+            await cleanup(device, conn)
             reject(new Error('subscribe_once timed out after ' + subscribeTimeout + 'ms'))
           }, subscribeTimeout)
 
@@ -79,18 +85,17 @@ module.exports = function (RED) {
             conn.characteristic.on('valuechanged', async (value) => {
               clearTimeout(timer)
               await conn.characteristic.stopNotifications()
-              await device.disconnect()
-              conn.destroy()
+              await cleanup(device, conn)
               resolve([{ payload: 'Notification received' }, null, { payload: value.toString('hex') }])
             })
             await conn.characteristic.startNotifications()
-            // Optional write after notify is active
             if (writeHandle && writeData) {
               const gattServer = await device.gatt()
               await triggerWrite(gattServer, parseInt(writeHandle, 16), writeData)
             }
           } catch (err) {
             clearTimeout(timer)
+            await cleanup(device, conn)
             reject(err)
           }
         })
@@ -99,13 +104,12 @@ module.exports = function (RED) {
         if (activeSubscriptions.has(mac)) {
           throw new Error('Already subscribed for ' + mac)
         }
-        const conn = await connectWithRetry(mac, handle, retries, retryDelay)
+        conn = await connectWithRetry(mac, handle, retries, retryDelay)
         device = conn.device
         conn.characteristic.on('valuechanged', (value) => {
           onNotify(value.toString('hex'))
         })
         await conn.characteristic.startNotifications()
-        // Optional write after notify is active
         if (writeHandle && writeData) {
           const gattServer = await device.gatt()
           await triggerWrite(gattServer, parseInt(writeHandle, 16), writeData)
@@ -131,9 +135,7 @@ module.exports = function (RED) {
       }
 
     } catch (error) {
-      if (device && operation !== 'subscribe' && operation !== 'unsubscribe') {
-        try { await device.disconnect() } catch (e) {}
-      }
+      await cleanup(device, conn)
       throw new Error('Bluetooth error: ' + error.message)
     }
   }
