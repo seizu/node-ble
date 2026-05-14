@@ -1,6 +1,6 @@
 {
-  "name": "node-red-contrib-ble-rw",
-  "version": "1.0.5",
+  "name": "node-red-contrib-ble-seizu",
+  "version": "1.0.9",
   "description": "A Node-RED node for BLE read/write operations using node-ble",
   "main": "ble.js",
   "scripts": {},
@@ -11,7 +11,7 @@
   },
   "node-red": {
     "nodes": {
-      "ble": "ble.js"
+      "ble-seizu": "ble.js"
     }
   }
 }
