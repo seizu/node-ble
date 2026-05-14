@@ -1,4 +1,4 @@
-# node-red-contrib-ble-rw
+# node-red-contrib-ble-seizu
 
 A Node-RED node for Bluetooth Low Energy (BLE) read, write and notify operations, based on the `node-ble` library.
 
@@ -109,7 +109,7 @@ Parse radon value:
 Local installation:
 ```bash
 cd ~/.node-red
-npm install /path/to/node-red-contrib-ble-rw
+npm install /path/to/node-red-contrib-ble-seizu
 ```
 
 Then restart Node-RED:
